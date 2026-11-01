@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "PrayerNotif (Package)": {
+      "commandName": "Project"
+    },
+    "PrayerNotif (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
