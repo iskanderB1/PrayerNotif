@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
+using PrayerNotif.Extentions;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -12,13 +13,14 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Windows.Media.Core;
 using Windows.Media.Playback;
+using PrayerNotif.Services;
 
 namespace PrayerNotif;
 public sealed partial class MainWindow : Window
 {
     const string NotifSound = @"C:\Windows\Media\Alarm02.wav";
-    private readonly string[] Reminders = ["may allah accept your prayers -eylül", "dont forget your wudu!"];
-    private readonly string AppDataPath = Windows.Storage.ApplicationData.Current.LocalFolder.Path;
+    private readonly string[] Reminders = ["may allah accept your prayers -vol", "dont forget your wudu!"];
+    private readonly string UserPrefrencesPath = GetUserPrefrencesPath();       
     private readonly DispatcherTimer _timer;
     private readonly MediaPlayer _player = new();
     private readonly ObservableCollection<ScheduleItem> _schedules = [];
@@ -26,6 +28,15 @@ public sealed partial class MainWindow : Window
     private static UserPrefrences? _userPrefrences = null;
     private DateTime _lastFetchDate = DateTime.MinValue;
     private DateTime _lastAttemptDate = DateTime.MinValue;
+
+    private static string GetUserPrefrencesPath()
+    {
+        var appDataPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PrayerNotif");
+        Directory.CreateDirectory(appDataPath);
+        return Path.Combine(appDataPath, "userprefrences.json");
+    }
 
     public MainWindow()
     {
@@ -38,10 +49,16 @@ public sealed partial class MainWindow : Window
                 AppWindow.Show();
             });
         };
-
         AppNotificationManager.Default.Register();
 
         SchedulesListView.ItemsSource = _schedules;
+        _userPrefrences = DataHandeler.LoadData<UserPrefrences>(UserPrefrencesPath);
+        if(_userPrefrences is not null)
+        {
+            LatitudeBox.Value = _userPrefrences.UserCordinates.Lat;
+            LongitudeBox.Value = _userPrefrences.UserCordinates.Lon;
+            ManualOverrideCheckBox.IsChecked = true;
+        }
 
         _timer = new()
         {
@@ -57,10 +74,13 @@ public sealed partial class MainWindow : Window
     {
         await RefreshPrayerTimes();
     }
-    private Cords? LoadSavedCord()
+#if debug
+    private async void Debug_Click(object sender, RoutedEventArgs e)
     {
-        
+        DataHandeler.DeleteData(UserPrefrencesPath);
+        _userPrefrences = null;
     }
+#endif
     private async Task RefreshPrayerTimes()
     {
         bool isCoordinatesEntered = !(double.IsNaN(LatitudeBox.Value) || double.IsNaN(LongitudeBox.Value));
@@ -76,6 +96,14 @@ public sealed partial class MainWindow : Window
         }
         var lat = LatitudeBox.Value;
         var lon = LongitudeBox.Value;
+
+        DataHandeler.SaveData(UserPrefrencesPath, new UserPrefrences
+        {
+            UserCordinates = new Cords(lat, lon),
+            SpawnWindowOnStartup = _userPrefrences?.SpawnWindowOnStartup ?? true,
+            SoundVolume = _userPrefrences?.SoundVolume ?? 1
+        });
+
         LocationText.Text = "Somewhere...? idk, didnt bother to code the logic :P";
         await FetchPrayerTimesAsync(new(lat, lon));
     }
@@ -130,6 +158,7 @@ public sealed partial class MainWindow : Window
 
             string[] prayerNames = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
             TimeSpan? fajrCache = null;
+            TimeSpan? maghribCache = null;
             int count = 0;
             foreach (var prayer in prayerNames)
             {
@@ -137,21 +166,40 @@ public sealed partial class MainWindow : Window
                 if (!TimeSpan.TryParse(timeStr, out TimeSpan parsedTime))
                     continue; // prayer not returned / unparseable
 
-                // side effects first — the switch expression only produces values
+
                 if (prayer == "Fajr")
-                    fajrCache = parsedTime;
-
-                TimeSpan? sunnaTime = null;
-                if (prayer == "Isha" && fajrCache is not null)
-                    sunnaTime = ((parsedTime - fajrCache.Value) / 3) + parsedTime;
-
-                string note = prayer switch
                 {
-                    "Fajr" => "close your pc bratan",
-                    "Isha" when sunnaTime is not null =>
-                        $"sunna time from: {sunnaTime:hh\\:mm} to {sunnaTime + TimeSpan.FromHours(2):hh\\:mm}",
-                    _ => string.Empty
-                };
+                    fajrCache = parsedTime;
+                }
+                else if (prayer == "Maghrib")
+                {
+                    maghribCache = parsedTime;
+                }
+
+                string note = string.Empty;
+                if (prayer == "Fajr")
+                {
+                    note = "close your pc bratan";
+                }
+                else if (prayer == "Isha" && fajrCache is not null && maghribCache is not null)
+                {
+                    TimeSpan maghrib = maghribCache.Value;
+                    TimeSpan nextFajr = fajrCache.Value < maghrib
+                        ? fajrCache.Value + TimeSpan.FromDays(1)
+                        : fajrCache.Value;
+
+                    TimeSpan nightDuration = nextFajr - maghrib;
+
+                    TimeSpan firstThird = Wrap24h(maghrib + (nightDuration / 3));
+                    TimeSpan midnight = Wrap24h(maghrib + (nightDuration / 2));
+
+                    // Option 1: Delayed Isha window (1/3 of night to Islamic midnight)
+                    //note = $"sunna time from: {firstThird:hh\\:mm} to {midnight:hh\\:mm}";
+
+                    // Option 2: Preferred window from Isha adhan until 1/3 of the night (or midnight)
+                     note = $"preferred: {parsedTime:hh\\:mm} to {firstThird:hh\\:mm} (midnight: {midnight:hh\\:mm})";
+                }
+
                 bool isPrayerFinished = DateTime.Now.TimeOfDay > parsedTime;
                 count = isPrayerFinished ? count + 1 : count;
                 _schedules.Add(new ScheduleItem
@@ -214,7 +262,7 @@ public sealed partial class MainWindow : Window
             {
                 if (!schedule.HasTriggeredToday)
                 {
-                    SendNotification($"Time for {schedule.Name}", schedule.Message + $"\n{Reminders}");
+                    SendNotification($"Time for {schedule.Name}", schedule.Message + $"\n{Reminders.GetRandomItem()}");
                     schedule.HasTriggeredToday = true;
                     await RefreshPrayerTimes();
                 }
@@ -237,6 +285,8 @@ public sealed partial class MainWindow : Window
         _player.Volume = 1;
         _player.Play();
     }
+    private static TimeSpan Wrap24h(TimeSpan time) =>
+    time >= TimeSpan.FromDays(1) ? time - TimeSpan.FromDays(1) : time;
 }
 
 public class ScheduleItem

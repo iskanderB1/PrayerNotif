@@ -7,7 +7,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
-    Title="PrayerNotif 0.0.0.0.0.0.0.0.0.0.0.0.0.0.1v">
+    Title="PrayerNotif v0.0.0.2">
 
     <Window.SystemBackdrop>
         <MicaBackdrop />
@@ -46,7 +46,7 @@
                 </StackPanel>
             </StackPanel>
 
-            <ListView x:Name="SchedulesListView" Width="420" Height="220" BorderBrush="LightGray" BorderThickness="1" CornerRadius="4">
+            <ListView x:Name="SchedulesListView" Width="500" Height="250" BorderBrush="LightGray" BorderThickness="1" CornerRadius="4">
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="local:ScheduleItem">
                         <StackPanel Orientation="Horizontal" Spacing="15" Padding="5" Opacity="{x:Bind DoneOpacity}">
